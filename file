@@ -1,0 +1,147 @@
+.386
+.model flat, stdcall
+option casemap :none
+include includes\windows.inc
+include includes\masm32.inc
+include includes\kernel32.inc
+include includes\user32.inc
+include includes\macros\macros.asm
+includelib includes\masm32.lib
+includelib includes\kernel32.lib
+includelib includes\user32.lib
+
+.data
+aszPrompt db 'Expression: ', 0Dh, 0Ah, 0
+aszPressEnter db 0Dh, 0Ah, 0Dh, 0Ah, "Press ENTER to exit", 0
+aszResult db 10, 13, "Result of your equation is %d", 0
+
+OpAdd equ '+'
+OpSub equ '-'
+OpMul equ '*'
+OpDiv equ '/'
+
+AllowedChars db '=+-*/0123456789'
+LenAllowedChars equ $-AllowedChars
+OpChars db '=+-*/'
+LenOpChars equ $-OpChars
+
+.data?
+hConsoleOutput HANDLE ?
+hConsoleInput HANDLE ?
+Buffer db 1024 dup(?)
+BufLen dd ?
+Result dd ?
+Op1 dd ?
+Op2 dd ?
+Operation db ?
+.code
+
+PrevOperation proc
+mov eax, [Op1]
+cdq
+mov ebx, [Op2]
+cmp [Operation], OpAdd
+jne @@Sub
+add eax, ebx
+jmp @@Calc
+@@Sub:
+cmp [Operation], OpSub
+jne @@Mul
+sub eax, ebx
+jmp @@Calc
+@@Mul:
+cmp [Operation], OpMul
+jne @@Div
+mul ebx
+@@Div:
+cmp [Operation], OpDiv
+jne @@Calc
+idiv ebx
+@@Calc:
+mov [Op1], eax
+mov [Op2], 0
+mov al, [esi-1]
+mov [Operation], al
+ret
+PrevOperation endp
+
+main proc
+
+;получение описателей ввода и вывода консоли
+invoke GetStdHandle, STD_INPUT_HANDLE
+mov hConsoleInput, eax
+
+invoke GetStdHandle, STD_OUTPUT_HANDLE
+mov hConsoleOutput, eax
+
+invoke ClearScreen
+
+;ввод выражения
+invoke WriteConsole, hConsoleOutput, ADDR aszPrompt, LENGTHOF aszPrompt-1, ADDR BufLen, NULL
+invoke ReadConsole, hConsoleInput, ADDR Buffer, LENGTHOF Buffer, ADDR BufLen, NULL
+lea esi, [Buffer] ;удаление из буффера
+add esi, [BufLen] ;символов перевода строки
+mov [esi-2],word ptr 0
+sub [BufLen], 2
+
+;обработка выражение во введённой строке
+mov eax, 0
+mov [Op1], 0
+mov [Op2], 0
+mov [Operation], OpAdd
+
+lea esi, [Buffer]
+mov ecx, [BufLen]
+@@GetCmd:
+push ecx
+lodsb
+;проверка корректности введенных символов
+lea edi, [AllowedChars]
+mov ecx, [LenAllowedChars]
+repne scasb
+jnz @@Next
+@@ProcessChar:
+lea edi, [OpChars]
+mov ecx, [LenOpChars]
+repne scasb
+jz @@DoOperation
+@@TestDigits:
+;введена цифра
+and eax, 0FFh
+sub al, '0'
+mov ebx, [Op2]
+lea eax, [eax+8*ebx]
+lea eax, [eax+2*ebx]
+mov [Op2], eax
+
+pop ecx
+push ecx
+cmp ecx, 1
+jne @@Next
+
+@@DoOperation:
+;сначала завершается предыдущая операция
+call PrevOperation
+cmp al, '-'
+jne @@Next
+pop ecx
+jmp @@Break
+@@Next:
+pop ecx
+loop @@GetCmd
+@@Break:
+ResultShow:
+;Вывод результатов
+mov eax, [Op1]
+invoke wsprintf, ADDR Buffer, ADDR aszResult, eax
+mov [BufLen], eax
+invoke WriteConsole, hConsoleOutput, ADDR Buffer, BufLen, ADDR BufLen, NULL
+
+;ожидание нажатия на ENTER
+invoke WriteConsole, hConsoleOutput, ADDR aszPressEnter, LENGTHOF aszPressEnter - 1, ADDR BufLen, NULL
+invoke ReadConsole, hConsoleInput, ADDR Buffer, LENGTHOF Buffer, ADDR BufLen, NULL
+
+invoke ExitProcess, 0
+main endp
+
+end main
